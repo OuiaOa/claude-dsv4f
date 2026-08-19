@@ -25,8 +25,11 @@ try {
   const response = await fetch(`https://r.jina.ai/${url}`, { signal: AbortSignal.timeout(30000), headers: { accept: 'text/plain' } });
   if (!response.ok) throw new Error(`clean reader returned HTTP ${response.status}`);
   console.error('dsv4shim web: Defuddle is not installed; using Agent Reach/Jina clean-reader fallback. Install with: npm install -g defuddle');
-  process.stdout.write(await response.text());
-  process.exit(0);
+  const body = await response.text();
+  await new Promise(resolve => process.stdout.write(body, resolve));
+  // Let Node drain stdout naturally on Windows; process.exit() here can tear down libuv while
+  // the console pipe is still flushing and produces 0xC0000409 after otherwise valid output.
+  process.exitCode = 0;
 } catch (error) {
   console.error(`dsv4shim web: ${error.message}`);
   process.exit(1);
