@@ -153,6 +153,19 @@ editing (`dsv4shim stop && dsv4shim start`, or `systemctl --user restart dsv4shi
 | `peakSurcharge` | DeepSeek announced 2× peak pricing but has not activated it. Enable if it goes live. |
 | `trafficPolicy` | Local concurrency, pacing and helper output limits that keep ultracode/swarm fan-out bounded on pay-as-you-go DeepSeek. |
 | `cap.dailyUsd` | DeepSeek daily cap. Overridden by the `cap` file / `dsv4shim cap`. |
+
+### Sibling-safe ports
+
+`port` is the preferred port. At startup dsv4shim checks whether it is live or reserved by
+another local service and walks upward to the next usable port when necessary. It remembers the
+selected port in `~/.local/share/dsv4shim/active-port.json`, so the profile, statusline and
+updater keep following an automatic shift.
+
+Installed sibling configs with a numeric `port` in `~/.config`, `~/.local/share`, or the local
+Codex workspace are treated as reservations even when the sibling is stopped. Every shim also
+records its claim in the shared `~/.config/codex-port-reservations.json` registry; future local
+programs can participate by writing an entry with their name and port. Set
+`CODEX_SHIM_PORT_REGISTRY` only when testing or intentionally using a separate registry.
 | `vision.*` | model, endpoint, rates, `dailyCapUsd`, and `promptVersion` — bumping the last invalidates every cached description. |
 | `desktop.tierModelIds` | external Claude-looking model IDs Desktop discovers via `/v1/models`, one per logical tier (`opus`/`sonnet`/`fable`/`haiku`). Optional — omitting it falls back to the same IDs built into `shim.mjs`. |
 | `effort.tierDefaults` | reasoning-effort default per Desktop tier, used only when the client sends no explicit effort of its own. Optional, same fallback pattern as above. |

@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { choosePort, configuredPort, healthAt } from './dsv4shim-port-manager.mjs';
 
 const HOME = os.homedir();
 const WIN = process.platform === 'win32';
@@ -96,7 +97,15 @@ if (needsProbe) {
 }
 
 // profile
-const port = JSON.parse(fs.readFileSync(cfgPath, 'utf8')).port || 8788;
+const liveConfig = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+const configured = configuredPort({ envVar: 'DSV4SHIM_PORT', dataDir: DATA_DIR, app: 'dsv4shim', configPort: liveConfig.port, defaultPort: 8788 });
+const preferred = Number.parseInt(process.env.DSV4SHIM_PORT || liveConfig.port || 8788, 10);
+const portSelection = await (await healthAt(configured, '/_dsv4shim/health', 500)
+  ? Promise.resolve({ port: configured, preferredPort: preferred, shifted: configured !== preferred })
+  : choosePort({ app: 'dsv4shim', envVar: 'DSV4SHIM_PORT', configDir: CONFIG_DIR, dataDir: DATA_DIR,
+      configPort: liveConfig.port, bind: liveConfig.bind || '127.0.0.1' }));
+const port = portSelection.port;
+if (portSelection.shifted) console.log(yel(`Port ${preferred} is reserved or busy; using ${port} for dsv4shim.`));
 // Cross-platform on every OS — see dsv4shim-statusline.mjs's header for why this replaced the
 // old bash+curl statusline.sh (that script never ran on Windows, which has no guaranteed
 // POSIX shell, so every Windows install silently missed the cost display entirely).
