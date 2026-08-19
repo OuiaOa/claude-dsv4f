@@ -53,15 +53,17 @@ const bold = '\x1b[1m';
 const green = '\x1b[32m';
 
 await render({ script: 'bin/dsv4shim-statusline.mjs', portEnv: 'DSV4SHIM_PORT',
-  payload: dsPayload(41), stdin: dsInput, needle: `${green}bal 41.00 USD` });
+  payload: dsPayload(41), stdin: dsInput, needle: 'Bal:' });
+await render({ script: 'bin/dsv4shim-statusline.mjs', portEnv: 'DSV4SHIM_PORT',
+  payload: dsPayload(41), stdin: dsInput, needle: `${green}$41.00 USD` });
 
 await render({ script: 'bin/dsv4shim-statusline.mjs', portEnv: 'DSV4SHIM_PORT',
-  payload: dsPayload(40), stdin: dsInput, needle: `${yellow}bal 40.00 USD` });
+  payload: dsPayload(40), stdin: dsInput, needle: `${yellow}$40.00 USD` });
 await render({ script: 'bin/dsv4shim-statusline.mjs', portEnv: 'DSV4SHIM_PORT',
-  payload: dsPayload(30), stdin: dsInput, needle: `${orange}bal 30.00 USD` });
+  payload: dsPayload(30), stdin: dsInput, needle: `${orange}$30.00 USD` });
 await render({ script: 'bin/dsv4shim-statusline.mjs', portEnv: 'DSV4SHIM_PORT',
-  payload: dsPayload(20), stdin: dsInput, needle: `${red}bal 20.00 USD` });
+  payload: dsPayload(20), stdin: dsInput, needle: `${red}$20.00 USD` });
 await render({ script: 'bin/dsv4shim-statusline.mjs', portEnv: 'DSV4SHIM_PORT',
-  payload: dsPayload(100, true), stdin: dsInput, needle: `${red}bal 100.00 USD ${bold}x2` });
+  payload: dsPayload(100, true), stdin: dsInput, needle: `${red}$100.00 USD ${bold}x2` });
 
 console.log('statusline threshold tests: 4 passed');
