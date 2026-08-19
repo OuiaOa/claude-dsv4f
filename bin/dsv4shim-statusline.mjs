@@ -57,7 +57,7 @@ function fetchUsage(port, sentinel) {
 const s = (() => { try { return JSON.parse(readStdin() || '{}'); } catch { return {}; } })();
 const l = await fetchUsage(readPort(), readSentinel());
 
-const C = { dim: '\x1b[2m', r: '\x1b[0m', cyan: '\x1b[36m', grn: '\x1b[32m', yel: '\x1b[33m', red: '\x1b[31m', b: '\x1b[1m' };
+const C = { dim: '\x1b[2m', r: '\x1b[0m', cyan: '\x1b[36m', grn: '\x1b[32m', yel: '\x1b[33m', orange: '\x1b[38;5;208m', red: '\x1b[31m', b: '\x1b[1m' };
 const parts = [];
 
 // model + effort
@@ -106,7 +106,7 @@ const bi = l.balance?.balance_infos?.[0];
 if (bi) {
   const bal = parseFloat(bi.total_balance);
   const peak = l.peak?.active === true;
-  const col = (l.balance.is_available === false || peak) ? C.red : bal < 5 ? C.yel : C.dim;
+  const col = (l.balance.is_available === false || peak || bal <= 20) ? C.red : bal <= 30 ? C.orange : bal <= 40 ? C.yel : C.dim;
   // Bold rides on top of the red and both clear at the segment's single trailing reset.
   const tag = peak ? ` ${C.b}x${l.peak.multiplier}` : '';
   parts.push(`${col}bal ${bal.toFixed(2)} ${bi.currency}${tag}${C.r}`);
