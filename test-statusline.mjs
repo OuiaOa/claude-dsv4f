@@ -50,6 +50,10 @@ const yellow = '\x1b[33m';
 const orange = '\x1b[38;5;208m';
 const red = '\x1b[31m';
 const bold = '\x1b[1m';
+const green = '\x1b[32m';
+
+await render({ script: 'bin/dsv4shim-statusline.mjs', portEnv: 'DSV4SHIM_PORT',
+  payload: dsPayload(41), stdin: dsInput, needle: `${green}bal 41.00 USD` });
 
 await render({ script: 'bin/dsv4shim-statusline.mjs', portEnv: 'DSV4SHIM_PORT',
   payload: dsPayload(40), stdin: dsInput, needle: `${yellow}bal 40.00 USD` });

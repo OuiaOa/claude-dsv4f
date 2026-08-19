@@ -106,7 +106,7 @@ const bi = l.balance?.balance_infos?.[0];
 if (bi) {
   const bal = parseFloat(bi.total_balance);
   const peak = l.peak?.active === true;
-  const col = (l.balance.is_available === false || peak || bal <= 20) ? C.red : bal <= 30 ? C.orange : bal <= 40 ? C.yel : C.dim;
+  const col = (l.balance.is_available === false || peak || bal <= 20) ? C.red : bal <= 30 ? C.orange : bal <= 40 ? C.yel : C.grn;
   // Bold rides on top of the red and both clear at the segment's single trailing reset.
   const tag = peak ? ` ${C.b}x${l.peak.multiplier}` : '';
   parts.push(`${col}bal ${bal.toFixed(2)} ${bi.currency}${tag}${C.r}`);
