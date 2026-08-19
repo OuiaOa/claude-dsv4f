@@ -3,14 +3,12 @@
 # There is no systemd here, so the shim is started on demand by `dsv4shim run` instead of by a
 # service. That costs ~1s on first launch and removes a whole class of thing that can break.
 #
-# Detects Node and Claude Code. If Node itself is missing, attempts to install it via winget
-# (present on Windows 10 1709+ / 11 by default) before falling back to a manual-install
-# error. If Claude Code is missing, attempts to install it via
-# `npm install -g @anthropic-ai/claude-code`. Either auto-install step is skipped entirely
-# if -NoAutoInstall was passed.
+# Detects Node. If Node itself is missing, attempts to install it via winget (present on
+# Windows 10 1709+ / 11 by default) before falling back to a manual-install error. Claude
+# Code is installed privately into this shim's data directory during setup.
 #
 # Flags:
-#   -NoAutoInstall    do NOT auto-install Node.js or Claude Code even if missing
+#   -NoAutoInstall    do NOT auto-install Node.js during this install step
 #   -Bundle           copy Claude Code's binary into the dsv4shim install, so the resulting
 #                     setup is self-contained and the resolver prefers the bundled copy
 #   -Update           re-copy files even if the destination already exists
@@ -53,12 +51,12 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue) -and -not $NoAutoInsta
     }
 }
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-    throw "Node.js v20+ is required. Install from https://nodejs.org/ (or: winget install -e --id OpenJS.NodeJS.LTS), then re-run this installer in a NEW terminal."
+    throw "Node.js v22+ is required. Install from https://nodejs.org/ (or: winget install -e --id OpenJS.NodeJS.LTS), then re-run this installer in a NEW terminal."
 }
 $nodeVersion = (node -e 'process.stdout.write(process.versions.node)')
 $nodeMajor = [int]$nodeVersion.Split('.')[0]
-if ($nodeMajor -lt 20) {
-    throw "Node $nodeVersion detected -- dsv4shim needs v20 or newer. Please upgrade: https://nodejs.org/"
+if ($nodeMajor -lt 22) {
+    throw "Node $nodeVersion detected -- dsv4shim needs v22 or newer for the private Claude Code runner. Please upgrade: https://nodejs.org/"
 }
 
 # ---------------------------------------------- Find Claude Code binary
@@ -77,42 +75,8 @@ function Find-Claude {
 
 $claudeBin = Find-Claude
 
-# ------------------------------------------------- Auto-install Claude Code
-if (-not $claudeBin -and -not $NoAutoInstall) {
-    $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
-    if ($npmCmd) {
-        Write-Host "Claude Code CLI not found -- attempting install via npm..." -ForegroundColor Yellow
-        try {
-            & npm install -g @anthropic-ai/claude-code 2>&1 | Out-Host
-            # CONFIRMED LIVE BUG (found on a real Windows machine, 2026-08-12): npm install
-            # can report success (the package really is on disk, e.g. claude.cmd exists at
-            # $env:APPDATA\npm\claude.cmd immediately checkable in a fresh shell) while THIS
-            # SAME process's very next Find-Claude call still returns nothing -- reproduced
-            # twice: install.ps1 threw "Claude Code CLI is required" right after npm printed
-            # "added N packages", but running install.ps1 again immediately succeeded with
-            # zero further action needed. Root cause not fully isolated (likely a brief
-            # antivirus scan lock or filesystem-event delay on the just-written .cmd file,
-            # not an actual npm failure) -- a short retry loop is a robust fix regardless of
-            # the exact cause, and costs nothing when Find-Claude succeeds on the first try
-            # as it normally does.
-            for ($i = 0; -not $claudeBin -and $i -lt 5; $i++) {
-                $claudeBin = Find-Claude
-                if (-not $claudeBin) { Start-Sleep -Milliseconds 500 }
-            }
-            if ($claudeBin) {
-                Write-Host "Claude Code installed." -ForegroundColor Green
-            }
-        } catch {
-            Write-Host "  npm install failed -- falling through to manual instructions." -ForegroundColor Red
-        }
-    } else {
-        Write-Host "  npm not found either -- install Node.js (which includes npm) from https://nodejs.org/, then run:" -ForegroundColor Yellow
-        Write-Host "    npm install -g @anthropic-ai/claude-code" -ForegroundColor Yellow
-    }
-}
-
 if (-not $claudeBin) {
-    throw "Claude Code CLI is required. Install from https://claude.com/code, then re-run this installer.`n  (Looked for 'claude' on PATH and in: $HOME\.local\bin, $env:APPDATA\npm)"
+    Write-Host "Claude Code is not installed globally; dsv4shim setup will install a private runner." -ForegroundColor Yellow
 }
 
 New-Item -ItemType Directory -Force -Path $dest, $bin | Out-Null

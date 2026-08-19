@@ -3,8 +3,8 @@
 Claude Code driven by **DeepSeek V4 Flash 0731** instead of Anthropic models, with per-task
 thinking effort, image support, spend tracking and daily caps.
 
-Your normal `claude` is untouched — this installs a separate profile under `~/.dsv4shim`
-and never reads your Anthropic credentials.
+Your normal `claude` is untouched — setup installs a private Claude Code runner and separate
+profile under `~/.dsv4shim`; it never reads your Anthropic credentials.
 
 ## Install
 
@@ -36,10 +36,15 @@ dsv4shim setup
 **macOS GUI alternative** — `Finder` double-click on `install.command` does the same as the
 three shell lines above.
 
-**Prerequisites** — Node 20+ (`node --version`) and the Claude Code CLI already installed
-(`claude --version`). `dsv4shim setup` will prompt you to install either automatically if they're
-missing and the installer can reach npm. Full step-by-step with troubleshooting is in
+**Prerequisites** — Node 22+ (`node --version`) and npm. `dsv4shim setup` installs the official
+Claude Code package privately under `~/.local/share/dsv4shim/claude-code`. Use
+`dsv4shim setup --use-existing-claude` if you already have a CLI runner you want to reuse. Full
+step-by-step with troubleshooting is in
 [INSTALL.md](INSTALL.md).
+
+If a standard Claude profile already exists, setup offers a safe migration/import choice for
+its project sessions, transcripts, memories and permissions. Copy is the default safe choice;
+the standard Claude settings and credentials are never rerouted or overwritten.
 
 Optionally `dsv4shim key deepinfra` to enable screenshots — DeepSeek's endpoint cannot accept
 images, so they are transcribed by a vision model first.
@@ -87,27 +92,11 @@ Claude Code is pointed at a local shim on `127.0.0.1:8788` rather than at Anthro
 - **holds the key.** The real API key never enters Claude Code's environment; Claude Code
   authenticates to the shim with a locally generated sentinel.
 
-## Claude Desktop / Cowork
+## CLI-only runtime
 
-The shim also works as a Gateway for Claude Desktop and Cowork — it's the same
-Anthropic-compatible `/v1/messages` endpoint the CLI already uses, so no separate mode or
-process is needed. In Desktop's Gateway settings:
-
-- **Gateway URL**: `http://127.0.0.1:8788` (or your configured `port`/`bind`)
-- **Auth**: either `Authorization: Bearer <sentinel>` or `x-api-key: <sentinel>` — the sentinel
-  is the same one at `~/.config/dsv4shim/sentinel` the CLI profile already uses.
-- **Discover Models**: `GET /v1/models` returns four logical tiers — Fable, Opus, Sonnet,
-  Haiku — each a Claude-looking model ID (`claude-fable-5`, `claude-opus-5`, `claude-sonnet-5`,
-  `claude-haiku-4-5-20251001` by default; see `desktop.tierModelIds` below to change them).
-
-All four tiers resolve to the single configured `model` only — the shim force-sets the
-outgoing model on every request regardless of tier, so there is no path to a different or
-pricier upstream model. Reasoning defaults per tier (used only when Desktop doesn't send its
-own explicit effort/thinking preference — an explicit one always wins): Fable and Opus default
-to `max`, Sonnet to `high`, Haiku to thinking-disabled. See `effort.tierDefaults` below.
-
-Everything else — streaming, tool calls, images (via the same vision sidecar), long contexts —
-works exactly as it does for the CLI, since Desktop and the CLI share this one endpoint.
+dsv4shim deliberately configures Claude Code CLI only. It does not modify Claude Desktop,
+Claude's shared settings, or any global Claude installation. This keeps each shim's port,
+profile, model routing, background work and session state isolated and stable.
 
 ## Files
 
@@ -115,6 +104,7 @@ works exactly as it does for the CLI, since Desktop and the CLI share this one e
 |---|---|
 | `~/.config/dsv4shim/` | keys (0600), `config.json`, caps, probe results |
 | `~/.local/share/dsv4shim/` | code, `usage.jsonl` ledger, vision cache |
+| `~/.local/share/dsv4shim/claude-code/` | private upstream Claude Code package used by this shim |
 | `~/.dsv4shim/` | the isolated Claude Code profile |
 
 ## Is your vision setup any good?
@@ -167,8 +157,8 @@ records its claim in the shared `~/.config/codex-port-reservations.json` registr
 programs can participate by writing an entry with their name and port. Set
 `CODEX_SHIM_PORT_REGISTRY` only when testing or intentionally using a separate registry.
 | `vision.*` | model, endpoint, rates, `dailyCapUsd`, and `promptVersion` — bumping the last invalidates every cached description. |
-| `desktop.tierModelIds` | external Claude-looking model IDs Desktop discovers via `/v1/models`, one per logical tier (`opus`/`sonnet`/`fable`/`haiku`). Optional — omitting it falls back to the same IDs built into `shim.mjs`. |
-| `effort.tierDefaults` | reasoning-effort default per Desktop tier, used only when the client sends no explicit effort of its own. Optional, same fallback pattern as above. |
+| `desktop.tierModelIds` | Claude-compatible model IDs returned by `/v1/models`, one per logical tier (`opus`/`sonnet`/`fable`/`haiku`). The legacy key name is retained for config compatibility. |
+| `effort.tierDefaults` | reasoning-effort default per logical tier when the client sends no explicit effort of its own. |
 
 ## Troubleshooting
 

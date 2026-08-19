@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { findPrivateClaude } from './dsv4shim-claude.mjs';
 
 /**
  * Recursively visit every FILE (not directory) under `root`, calling
@@ -101,6 +102,9 @@ export function resolveClaude({ platform = process.platform,
     try { if (fsSync.existsSync(p)) return p; } catch {}
   }
 
+  const privateClaude = findPrivateClaude(dataDir, platform, fsSync);
+  if (privateClaude) return privateClaude;
+
   if (platform !== 'win32') return 'claude';
 
   // Otherwise let cmd.exe's PATHEXT do its job: if 'claude' resolves on PATH
@@ -126,8 +130,8 @@ export function resolveClaude({ platform = process.platform,
 
   throw new Error(
     `Claude Code CLI not found.\n` +
-    `  Looked for a bundled copy, 'claude' on PATH (via where.exe), and in: ${candidates.join(', ')}\n` +
-    `  Install Claude Code from https://claude.com/code, then re-run.`
+    `  Looked for a private runner under ${path.join(dataDir, 'claude-code')}, a bundled copy, 'claude' on PATH (via where.exe), and in: ${candidates.join(', ')}\n` +
+    `  Re-run dsv4shim setup, or pass --use-existing-claude if you installed Claude Code elsewhere.`
   );
 }
 

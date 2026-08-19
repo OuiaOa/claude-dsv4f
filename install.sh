@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
 # dsv4shim installer — Linux / macOS / WSL
 #
-# Detects Node, npm, and Claude Code. If Node itself is missing, attempts to install it via
-# the OS's own package manager (NodeSource+apt/dnf, pacman, or Homebrew) before falling back
-# to a manual-install message. If Claude Code is missing, attempts to install it via
-# `npm install -g @anthropic-ai/claude-code`. Either auto-install step is skipped entirely
-# if the user passed --no-auto-install.
+# Detects Node. If Node itself is missing, attempts to install it via the OS's own package
+# manager before falling back to a manual-install message. Claude Code is installed privately
+# into this shim's data directory during setup, so no global Claude installation is required.
 #
 # Flags:
-#   --no-auto-install    do NOT auto-install Node.js or Claude Code even if missing
+#   --no-auto-install    do NOT auto-install Node.js during this install step
 #   --bundle             copy Claude Code's binary into the dsv4shim install, so the
 #                        resulting setup is self-contained and the resolver prefers
 #                        the bundled copy. Has no effect if Claude Code isn't on PATH.
@@ -34,17 +32,17 @@ for a in "$@"; do
 done
 
 # -------------------------------------------------------------- Node (auto-install, then hard check)
-# Distro package repos often ship a Node too old for the v20 floor below, so this goes
+# Distro package repos often ship a Node too old for the v22 floor below, so this goes
 # straight to NodeSource/upstream sources rather than the generic `apt install nodejs` a
 # user might already have tried and found insufficient.
 if ! command -v node >/dev/null && [[ "$AUTO_INSTALL" -eq 1 ]]; then
   echo "Node.js not found — attempting install..."
   if command -v apt-get >/dev/null; then
     echo "  using NodeSource + apt (will prompt for sudo)..."
-    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs
+    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs
   elif command -v dnf >/dev/null; then
     echo "  using NodeSource + dnf (will prompt for sudo)..."
-    curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo -E bash - && sudo dnf install -y nodejs
+    curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo -E bash - && sudo dnf install -y nodejs
   elif command -v pacman >/dev/null; then
     echo "  using pacman (will prompt for sudo)..."
     sudo pacman -Sy --noconfirm nodejs npm
@@ -56,36 +54,16 @@ if ! command -v node >/dev/null && [[ "$AUTO_INSTALL" -eq 1 ]]; then
   fi
   hash -r 2>/dev/null || true
 fi
-command -v node >/dev/null || { echo "Node.js v20+ is required. Install from:"; echo "  https://nodejs.org/  (or use your package manager)"; exit 1; }
+command -v node >/dev/null || { echo "Node.js v22+ is required. Install from:"; echo "  https://nodejs.org/  (or use your package manager)"; exit 1; }
 node_major="$(node -e 'process.stdout.write(String(process.versions.node.split(".")[0]))')"
-if (( node_major < 20 )); then
-  echo "Node $node_major detected — dsv4shim needs v20 or newer. Please upgrade: https://nodejs.org/"; exit 1
+if (( node_major < 22 )); then
+  echo "Node $node_major detected — dsv4shim needs v22 or newer for the private Claude Code runner. Please upgrade: https://nodejs.org/"; exit 1
 fi
 
-# ------------------------------------------------------ Claude Code detection
+# ------------------------------------------------------ Optional existing Claude detection
 claude_bin="$(command -v claude || true)"
-if [[ -z "$claude_bin" && "$AUTO_INSTALL" -eq 1 ]]; then
-  if command -v npm >/dev/null; then
-    echo "Claude Code CLI not found on PATH — attempting install via npm..."
-    if npm install -g @anthropic-ai/claude-code 2>&1 | tail -5; then
-      echo "Claude Code installed."
-      # Refresh PATH-aware hash for this shell
-      hash -r 2>/dev/null || true
-      claude_bin="$(command -v claude || true)"
-    else
-      echo "  npm install failed — falling through to manual instructions."
-    fi
-  else
-    echo "  npm not found either — install Node.js from https://nodejs.org/, then run:"
-    echo "    npm install -g @anthropic-ai/claude-code"
-  fi
-fi
-
 if [[ -z "$claude_bin" ]]; then
-  echo ""
-  echo "Claude Code CLI is required. Install from https://claude.com/code, then re-run."
-  echo "  (If you've installed it elsewhere, re-run with the full path on PATH.)"
-  exit 1
+  echo "Claude Code is not installed globally; dsv4shim setup will install a private runner."
 fi
 
 # ------------------------------------------------------------- copy files
@@ -111,11 +89,11 @@ chmod +x "$DEST"/bin/* 2>/dev/null || true
 # This makes the dsv4shim install self-contained — PATH becomes optional.
 if [[ "$BUNDLE" -eq 1 ]]; then
   bundled="$DEST/bin/claude"
-  if cp "$claude_bin" "$bundled" 2>/dev/null; then
+  if [[ -n "$claude_bin" ]] && cp "$claude_bin" "$bundled" 2>/dev/null; then
     chmod +x "$bundled"
     echo "Bundled Claude Code → $bundled (resolver will prefer this copy)."
   else
-    echo "  WARNING: could not bundle '$claude_bin' into $DEST/bin/claude (continuing anyway)."
+    echo "  WARNING: no existing Claude binary to bundle; setup will install a private runner."
   fi
 fi
 

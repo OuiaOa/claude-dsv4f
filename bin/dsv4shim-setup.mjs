@@ -17,7 +17,8 @@ const WIN = process.platform === 'win32';
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CONFIG_DIR = process.env.DSV4SHIM_CONFIG_DIR || path.join(HOME, '.config', 'dsv4shim');
 const DATA_DIR = process.env.DSV4SHIM_DATA_DIR || path.join(HOME, '.local', 'share', 'dsv4shim');
-const PROFILE_DIR = path.join(HOME, '.dsv4shim');
+const PROFILE_DIR = process.env.DSV4SHIM_PROFILE_DIR || path.join(HOME, '.dsv4shim');
+const USE_EXISTING_CLAUDE = process.argv.includes('--use-existing-claude');
 
 const bold = s => `\x1b[1m${s}\x1b[0m`;
 const yel = s => `\x1b[33m${s}\x1b[0m`;
@@ -94,6 +95,30 @@ if (needsProbe) {
 } else {
   const probedAt = fs.statSync(probeResultsPath).mtime.toISOString().slice(0, 10);
   console.log(`\nUsing cached endpoint probe from ${probedAt} (pass --reprobe to re-measure).`);
+}
+
+// Keep the Claude runner private to this shim by default. npm installs the upstream Claude
+// Code package into this shim's data directory; it is not patched and the normal Claude
+// settings/profile are never touched. Pass --use-existing-claude to reuse a system runner.
+if (!USE_EXISTING_CLAUDE) {
+  const { findPrivateClaude, installPrivateClaude } = await import('./dsv4shim-claude.mjs');
+  if (!findPrivateClaude(DATA_DIR, process.platform)) {
+    const nodeMajor = Number.parseInt(process.versions.node.split('.')[0], 10);
+    if (nodeMajor < 22) {
+      console.error(yel('The private Claude Code package requires Node.js 22 or newer (found ' + process.versions.node + ').'));
+      console.error(yel('Upgrade Node.js and rerun setup, or use --use-existing-claude with a runner already on PATH.'));
+      process.exit(1);
+    }
+    console.log(bold('\nInstalling the private Claude Code runner for dsv4shim...'));
+    try {
+      const runner = installPrivateClaude({ dataDir: DATA_DIR });
+      console.log(`Claude Code runner installed at ${runner}`);
+    } catch (e) {
+      console.error(yel(`Private Claude Code install failed: ${e.message}`));
+      console.error(yel('Re-run with --use-existing-claude if Claude Code is already installed on your PATH.'));
+      process.exit(1);
+    }
+  }
 }
 
 // profile
@@ -323,6 +348,8 @@ WantedBy=default.target
 spawnSync(node, [path.join(ROOT, 'bin', 'dsv4shim.mjs'), 'start'], { stdio: 'inherit' });
 
 // ------------------------------------------------------ multi-source import picker
+// This is migration only: it imports history/projects/permissions into the isolated CLI
+// profile and never configures Claude Desktop or reroutes the standard Claude installation.
 // Three possible sources, any combination present: Claude Code CLI, Claude Desktop, and
 // opencode. See bin/dsv4shim-sources.mjs's header for exactly what each one is and why
 // claude-cli/claude-desktop are handled together (they share ~/.claude/projects — Desktop
@@ -353,56 +380,7 @@ spawnSync(node, [path.join(ROOT, 'bin', 'dsv4shim.mjs'), 'start'], { stdio: 'inh
       const rl = (await import('node:readline')).default.createInterface({ input: process.stdin, output: process.stdout });
       const ask = (q) => new Promise(res => rl.question(q, a => res(a.trim().toLowerCase())));
 
-      // Axis 3, asked FIRST and framed as the recommended path when a real CLI binary is
-      // present: point the EXISTING install at DeepSeek in place, rather than importing a
-      // copy into an isolated profile. Nothing gets copied, so the session switcher
-      // (left-arrow), background jobs, and memories are already perfect — they're the same
-      // real profile, just talking to a different backend. Copy-into-isolated-profile
-      // (below) genuinely cannot replicate that: the switcher is powered by Claude Code's
-      // own internal per-session job-tracking state, generated live as a session runs, not
-      // something a copied .jsonl file can carry with it (confirmed 2026-08-13 — see memory).
-      // Reroute's real cost, stated plainly rather than buried: it edits the real, shared
-      // settings.json in place, so a later "go back to standard Anthropic Claude Code" means
-      // reverting that edit (backed up, always revertible) rather than nothing to undo at
-      // all, which the copy-based path gives for free. That's why this is a recommendation,
-      // not a default applied silently.
-      const cliSource = present.find(s => s.id === 'claude-cli');
-      let cliRerouted = false;
-      if (cliSource?.binary) {
-        console.log(`\n  ${bold('Recommended: point Claude Code CLI directly at DeepSeek')}`);
-        console.log('  Keeps the real `claude` command working exactly as it does today — same session');
-        console.log('  switcher, same background jobs, same memories, nothing to import — it just never');
-        console.log('  bills Anthropic again. Edits its real settings.json in place (backed up first,');
-        console.log('  revertible any time). If you\'d rather keep a completely separate, isolated DeepSeek');
-        console.log('  profile instead (e.g. to keep the real install untouched for switching back to');
-        console.log('  Anthropic later), say no here and you\'ll get the normal copy/move options next.');
-        const rerouteAns = await ask('  Route the existing install through dsv4shim? [Y/n] ');
-        if (rerouteAns[0] !== 'n') {
-          const { buildRerouteEnv, buildRerouteExtras, applyCliReroute } = await import('./dsv4shim-reroute.mjs');
-          const { newBackupDir } = await import('./dsv4shim-scrub.mjs');
-          const cliSettingsPath = path.join(cliSource.paths.profile, 'settings.json');
-          const backupDir = newBackupDir(PROFILE_DIR, 'cli-reroute');
-          try {
-            const extras = buildRerouteExtras({ rootDir: ROOT, platform: process.platform });
-            const r = applyCliReroute(cliSettingsPath, buildRerouteEnv({ port, sentinel: SENTINEL }), backupDir, extras);
-            console.log(bold(`  Rerouted ${cliSettingsPath}`));
-            if (r.backupPath) console.log(`  (original backed up to ${r.backupPath})`);
-            console.log(yel('  Note: any OTHER standalone Claude Code CLI install that reads this same'));
-            console.log(yel('  settings.json will also be rerouted — they share one config file.'));
-            cliRerouted = true;
-            // The real install now talks to DeepSeek directly -- importing a copy into the
-            // isolated dsv4shim profile too would just be redundant duplication of the same
-            // history, so claude-cli's own disposition is implicitly "leave" from here.
-            disposition['claude-cli'] = 'leave';
-          } catch (e) {
-            console.error(yel(`  Reroute failed: ${e.message}`));
-            console.log('  Falling through to the normal copy/move options for Claude Code CLI.');
-          }
-        }
-      }
-
       for (const s of present) {
-        if (s.id === 'claude-cli' && cliRerouted) continue; // already handled above
         const detail = s.id === 'opencode'
           ? (s.stats.error ? s.stats.error : `${s.stats.sessions} session(s)`)
           : s.id === 'claude-desktop'

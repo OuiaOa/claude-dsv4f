@@ -294,21 +294,27 @@ function capCmd(rest) {
 
 function help(topic) {
   const H = {
-    setup: `${bold('dsv4shim setup')} [--rekey] [--no-vision] [--reprobe]
+    setup: `${bold('dsv4shim setup')} [--rekey] [--no-vision] [--reprobe] [--use-existing-claude]
 
 First-time setup. Prompts for your DeepSeek API key (hidden — never echoed, never in argv or
-shell history), offers an optional DeepInfra key for screenshots, probes the endpoint to
-calibrate itself against what it actually does, writes the isolated Claude Code profile, and
-starts the shim.
+shell history), installs a private Claude Code runner, offers an optional DeepInfra key for
+screenshots, probes the endpoint to calibrate itself, writes the isolated profile, and starts
+the shim.
 
   --rekey       replace the stored DeepSeek key (also re-probes — a new key/account could
                 behave differently)
   --no-vision   skip the DeepInfra prompt entirely
   --reprobe     force a fresh endpoint probe even if a cached result already exists
+  --use-existing-claude  reuse a Claude Code runner already installed on PATH instead of
+                         installing a private copy under ~/.local/share/dsv4shim
 
 The probe (a few cents, but several minutes — it times real API calls at every effort level)
 only runs once and is cached; re-running setup later (e.g. to pick up a new feature) skips it
 by default instead of re-measuring something that hasn't changed.
+
+If a standard Claude profile is found, setup also offers an optional copy/move/leave migration
+for its project history, sessions, memories and permissions. It never reroutes the standard
+Claude settings; use --use-existing-claude only to reuse an existing CLI binary.
 
 Safe to re-run: an existing config.json is never overwritten.`,
 

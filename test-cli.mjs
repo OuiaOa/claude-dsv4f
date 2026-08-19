@@ -92,7 +92,7 @@ check('Windows + nothing found: throws with an actionable message', () => {
     fsSync: fsAllow([]),
     env: envOf({}),
     home: '/tmp/empty',
-  }), (err) => /Claude Code CLI not found/.test(err.message) && /claude\.com\/code/.test(err.message));
+  }), (err) => /Claude Code CLI not found/.test(err.message) && /--use-existing-claude/.test(err.message));
 });
 
 check('Windows + where.exe throws (sandboxed env): falls through to fallback paths', () => {
