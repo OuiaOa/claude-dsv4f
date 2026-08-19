@@ -228,6 +228,22 @@ if (!fs.existsSync(sPath)) {
       delete live.env.ANTHROPIC_CUSTOM_MODEL_OPTION_NAME;
       added.push('custom model option (removed duplicate)');
     }
+    // Refresh model values that belong to dsv4shim itself. This keeps an existing install from
+    // silently retaining the old all-flash policy after the tier map changes; non-DeepSeek
+    // values are deliberate user overrides and remain untouched.
+    const ownedModelKeys = new Set([
+      'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_FABLE_MODEL',
+      'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+      'ANTHROPIC_SMALL_FAST_MODEL', 'CLAUDE_CODE_SUBAGENT_MODEL',
+      'CLAUDE_CODE_BG_CLASSIFIER_MODEL',
+    ]);
+    for (const [k, v] of Object.entries(settings.env)) {
+      if (!ownedModelKeys.has(k) || typeof v !== 'string') continue;
+      if (typeof live.env?.[k] === 'string' && /^deepseek-v4-/i.test(live.env[k]) && live.env[k] !== v) {
+        live.env[k] = v;
+        added.push(`${k} (model policy updated)`);
+      }
+    }
     // hooks.PreToolUse is an array — the generic merge above only fills it in when missing
     // entirely. If it already exists (from an earlier setup, or the user's own hook), check
     // for our specific entry by command string and append rather than duplicate or clobber.
