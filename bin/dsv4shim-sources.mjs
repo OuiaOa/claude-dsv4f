@@ -105,11 +105,12 @@ export function findClaudeBinary({ home = HOME, env = process.env, platform = pr
 
 /** Where Claude Desktop keeps its per-user application data, per platform. */
 export function desktopDataDir({ home = HOME, env = process.env, platform = process.platform } = {}) {
+  const join = platform === 'win32' ? path.win32.join : path.posix.join;
   if (platform === 'win32') {
-    return env.APPDATA ? path.join(env.APPDATA, 'Claude') : path.join(home, 'AppData', 'Roaming', 'Claude');
+    return env.APPDATA ? join(env.APPDATA, 'Claude') : join(home, 'AppData', 'Roaming', 'Claude');
   }
-  if (platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'Claude');
-  return path.join(home, '.config', 'Claude');
+  if (platform === 'darwin') return join(home, 'Library', 'Application Support', 'Claude');
+  return join(home, '.config', 'Claude');
 }
 
 /**

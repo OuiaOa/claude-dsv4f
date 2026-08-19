@@ -228,6 +228,7 @@ http.get({
       console.log(bold('\n  live'));
       console.log(`    today          : ${usd(s.todayUsd)} / cap $${s.capUsd.toFixed(2)}`);
       console.log(`    burn rate      : ${num(s.burn.tokensPerMin)} tok/min   ~$${s.burn.usdPerHour.toFixed(3)}/hr`);
+      if (s.traffic) console.log(`    traffic        : ${s.traffic.active}/${s.traffic.maxConcurrent} active, ${s.traffic.queued} queued (${s.traffic.maxBackgroundConcurrent} background lane)`);
       if (s.vision?.enabled) {
         const v = s.vision;
         const flag = v.capUsd > 0 && v.spentUsd >= v.capUsd ? '  \x1b[31mCAP REACHED\x1b[0m' : '';

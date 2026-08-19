@@ -220,7 +220,7 @@ dsv4shim-usage
 | `dsv4shim run` | start a session |
 | `dsv4shim run --resume` | resume this folder's last session |
 | `dsv4shim run --effort ultracode` | maximum thoroughness, multi-agent |
-| `dsv4shim-usage` | spend, token burn rate, remaining credit |
+| `dsv4shim-usage` | spend, token burn rate, remaining credit and traffic queue |
 | `dsv4shim cap 10` | set the daily spend limit to $10 |
 | `dsv4shim status` | is the service up, which keys are stored |
 | `dsv4shim help <command>` | detail on any command |

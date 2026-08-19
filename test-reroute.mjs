@@ -27,7 +27,7 @@ console.log('\x1b[1mbuildRerouteEnv\x1b[0m');
   const env = buildRerouteEnv({ port: 8788, sentinel: 'test-sentinel-abc' });
   check('base URL points at the given port', env.ANTHROPIC_BASE_URL === 'http://127.0.0.1:8788');
   check('auth token is the given sentinel', env.ANTHROPIC_AUTH_TOKEN === 'test-sentinel-abc');
-  check('default routes to the pro/medium profile', env.ANTHROPIC_MODEL === 'deepseek-v4-pro-medium');
+  check('the built-in Default row is left in charge of the default profile', !('ANTHROPIC_MODEL' in env));
   // Fable has its own env var; leaving it unset is what made it fall through to the native
   // entry and ignore the Pro/max intent entirely.
   check('fable gets its own profile', env.ANTHROPIC_DEFAULT_FABLE_MODEL === 'deepseek-v4-pro-max');
@@ -82,7 +82,7 @@ console.log('\n\x1b[1mapplyCliReroute: existing settings.json is preserved, not 
   const written = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
   check('pre-existing enabledPlugins untouched', written.enabledPlugins['code-review@x'] === true);
   check('pre-existing permissions untouched', written.permissions.defaultMode === 'default');
-  check('env block was added alongside existing keys', written.env.ANTHROPIC_MODEL === 'deepseek-v4-pro-medium');
+  check('env block was added alongside existing keys', written.env.ANTHROPIC_BASE_URL === 'http://127.0.0.1:8788');
   const backedUp = JSON.parse(fs.readFileSync(r.backupPath, 'utf8'));
   check('backup is byte-faithful to the ORIGINAL (no env block in it)', backedUp.env === undefined);
 }
@@ -103,7 +103,7 @@ console.log('\n\x1b[1mapplyCliReroute: never overwrites a value the user already
   check('the user\'s own ANTHROPIC_MODEL override survives untouched',
     written.env.ANTHROPIC_MODEL === 'user-picked-a-different-model');
   check('the user\'s unrelated env var survives', written.env.SOME_OTHER_VAR === 'keep-me');
-  check('ANTHROPIC_MODEL was correctly excluded from "added" (already present)',
+  check('ANTHROPIC_MODEL was correctly excluded from "added" (not shim-managed)',
     !r.added.includes('ANTHROPIC_MODEL'));
   check('other, non-conflicting keys were still added', written.env.ANTHROPIC_BASE_URL === 'http://127.0.0.1:8788');
 }
@@ -287,9 +287,9 @@ console.log('\n\x1b[1mapplyCliReroute: deny-list hook is deduped, never duplicat
   // The custom-model entry is gone entirely — it duplicated a menu that already lists every
   // tier. A stale one left behind by an older reroute is not this function's to delete, but it
   // must not be re-added either.
-  check('no custom-model entry is written back',
-    !('ANTHROPIC_CUSTOM_MODEL_OPTION' in after) || after.ANTHROPIC_CUSTOM_MODEL_OPTION_NAME === 'DeepSeek V4 Flash 0731',
-    JSON.stringify(after.ANTHROPIC_CUSTOM_MODEL_OPTION_NAME));
+  check('old default and custom-model entries are removed',
+    !('ANTHROPIC_MODEL' in after) && !('ANTHROPIC_CUSTOM_MODEL_OPTION' in after) && !('ANTHROPIC_CUSTOM_MODEL_OPTION_NAME' in after),
+    JSON.stringify(after));
   check('an existing base URL is never rewritten',
     after.ANTHROPIC_BASE_URL === 'http://127.0.0.1:9999', after.ANTHROPIC_BASE_URL);
   check('an existing auth token is never rewritten',

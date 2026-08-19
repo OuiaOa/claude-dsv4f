@@ -151,6 +151,7 @@ editing (`dsv4shim stop && dsv4shim start`, or `systemctl --user restart dsv4shi
 | `effort.heuristic` | scoring for auto-escalation; `enabled: false` turns it off entirely. |
 | `rates` | USD per million tokens, with the cache-hit/miss split. |
 | `peakSurcharge` | DeepSeek announced 2× peak pricing but has not activated it. Enable if it goes live. |
+| `trafficPolicy` | Local concurrency, pacing and helper output limits that keep ultracode/swarm fan-out bounded on pay-as-you-go DeepSeek. |
 | `cap.dailyUsd` | DeepSeek daily cap. Overridden by the `cap` file / `dsv4shim cap`. |
 | `vision.*` | model, endpoint, rates, `dailyCapUsd`, and `promptVersion` — bumping the last invalidates every cached description. |
 | `desktop.tierModelIds` | external Claude-looking model IDs Desktop discovers via `/v1/models`, one per logical tier (`opus`/`sonnet`/`fable`/`haiku`). Optional — omitting it falls back to the same IDs built into `shim.mjs`. |

@@ -28,6 +28,21 @@ try { fs.chmodSync(CONFIG_DIR, 0o700); } catch { /* Windows */ }
 // config.json ships with the package; copy it in on first setup, never overwrite a tuned one.
 const cfgPath = path.join(CONFIG_DIR, 'config.json');
 if (!fs.existsSync(cfgPath)) fs.copyFileSync(path.join(ROOT, 'config.default.json'), cfgPath);
+// Preserve tuned provider/cap settings while bringing older installs onto the bounded
+// fan-out policy. A config that predates trafficPolicy also gets the safer non-promoting
+// ultracode default; later explicit choices are left alone.
+try {
+  const liveCfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8').replace(/^﻿/, ''));
+  const shippedCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.default.json'), 'utf8'));
+  const hadTrafficPolicy = 'trafficPolicy' in liveCfg;
+  let changed = false;
+  if (!hadTrafficPolicy && shippedCfg.trafficPolicy) { liveCfg.trafficPolicy = shippedCfg.trafficPolicy; changed = true; }
+  if (!hadTrafficPolicy && liveCfg.effort?.ultracodePromotesSubagents === true) {
+    liveCfg.effort.ultracodePromotesSubagents = false;
+    changed = true;
+  }
+  if (changed) fs.writeFileSync(cfgPath, JSON.stringify(liveCfg, null, 2) + '\n');
+} catch (e) { console.error(yel(`config safety migration skipped: ${e.message}`)); }
 
 // sentinel: what Claude Code presents to the shim, so the real key never enters its environment
 const sentinelPath = path.join(CONFIG_DIR, 'sentinel');
@@ -97,18 +112,25 @@ if (!WIN && fs.existsSync(denyListSrc) && !fs.existsSync(denyListDst)) {
   try { fs.chmodSync(denyListDst, 0o755); } catch { /* no-op on Windows filesystems */ }
 }
 
+const qualitySessionCommand = `node "${path.join(ROOT, 'bin', 'dsv4shim-quality-session.mjs')}"`;
+const qualityCheckCommand = `node "${path.join(ROOT, 'bin', 'dsv4shim-quality-check.mjs')}"`;
+const qualityHooks = {
+  SessionStart: [{ hooks: [{ type: 'command', command: qualitySessionCommand, timeout: 5 }] }],
+  // Async is important: tests provide feedback on the next turn without serialising Claude's
+  // edit loop, and the hook itself coalesces concurrent firings with a short-lived lock.
+  PostToolUse: [{ matcher: 'Edit|Write|NotebookEdit', hooks: [{ type: 'command', command: qualityCheckCommand, async: true, timeout: 120 }] }],
+};
+
 const settings = {
   env: {
     ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`,
     ANTHROPIC_AUTH_TOKEN: SENTINEL,
-    ANTHROPIC_MODEL: 'deepseek-v4-flash',
-    ANTHROPIC_DEFAULT_OPUS_MODEL: 'deepseek-v4-flash',
-    ANTHROPIC_DEFAULT_SONNET_MODEL: 'deepseek-v4-flash',
-    ANTHROPIC_DEFAULT_HAIKU_MODEL: 'deepseek-v4-flash-bg',
+    ANTHROPIC_DEFAULT_OPUS_MODEL: 'deepseek-v4-pro-high',
+    ANTHROPIC_DEFAULT_FABLE_MODEL: 'deepseek-v4-pro-max',
+    ANTHROPIC_DEFAULT_SONNET_MODEL: 'deepseek-v4-flash-max',
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: 'deepseek-v4-flash-high',
     ANTHROPIC_SMALL_FAST_MODEL: 'deepseek-v4-flash-bg',
     CLAUDE_CODE_SUBAGENT_MODEL: 'deepseek-v4-flash-sub',
-    ANTHROPIC_CUSTOM_MODEL_OPTION: 'deepseek-v4-flash',
-    ANTHROPIC_CUSTOM_MODEL_OPTION_NAME: 'DeepSeek V4 Flash 0731',
     CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '1',
     CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING: '1',
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
@@ -145,9 +167,12 @@ const settings = {
   // confirmation, or back to 'bypassPermissions' if you want zero prompts again.
   permissions: { defaultMode: 'acceptEdits' },
   ...(statusline ? { statusLine: statusline } : {}),
-  ...(fs.existsSync(denyListDst) ? {
-    hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: `bash ${denyListDst}`, timeout: 5 }] }] },
-  } : {}),
+  hooks: {
+    ...(fs.existsSync(denyListDst) ? {
+      PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: `bash ${denyListDst}`, timeout: 5 }] }],
+    } : {}),
+    ...qualityHooks,
+  },
 };
 
 const sPath = path.join(PROFILE_DIR, 'settings.json');
@@ -190,6 +215,19 @@ if (!fs.existsSync(sPath)) {
                  dst[k] && typeof dst[k] === 'object' && !Array.isArray(dst[k])) merge(dst[k], v, here);
       }
     })(live, settings);
+    // Keep Claude Code's built-in Default row. Older DSV4Shim releases exposed a literal
+    // ANTHROPIC_MODEL plus a custom option, which created an unnecessary sixth menu entry.
+    // Remove only known shim-owned values; deliberate user overrides remain intact.
+    const ownProfile = v => typeof v === 'string' && /^deepseek-v4-/i.test(v);
+    if (ownProfile(live.env?.ANTHROPIC_MODEL)) {
+      delete live.env.ANTHROPIC_MODEL;
+      added.push('ANTHROPIC_MODEL (restored Claude Default)');
+    }
+    if (ownProfile(live.env?.ANTHROPIC_CUSTOM_MODEL_OPTION) || live.env?.ANTHROPIC_CUSTOM_MODEL_OPTION_NAME === 'DeepSeek V4 Flash 0731') {
+      delete live.env.ANTHROPIC_CUSTOM_MODEL_OPTION;
+      delete live.env.ANTHROPIC_CUSTOM_MODEL_OPTION_NAME;
+      added.push('custom model option (removed duplicate)');
+    }
     // hooks.PreToolUse is an array — the generic merge above only fills it in when missing
     // entirely. If it already exists (from an earlier setup, or the user's own hook), check
     // for our specific entry by command string and append rather than duplicate or clobber.
@@ -203,6 +241,16 @@ if (!fs.existsSync(sPath)) {
         added.push('hooks.PreToolUse[deny-list]');
       }
     }
+    live.hooks ??= {};
+    const ensureQualityHook = (event, group) => {
+      live.hooks[event] ??= [];
+      const command = group.hooks?.[0]?.command;
+      const already = live.hooks[event].some(h =>
+        Array.isArray(h?.hooks) && h.hooks.some(hh => String(hh?.command || '') === command));
+      if (!already) { live.hooks[event].push(group); added.push(`hooks.${event}[quality]`); }
+    };
+    ensureQualityHook('SessionStart', qualityHooks.SessionStart[0]);
+    ensureQualityHook('PostToolUse', qualityHooks.PostToolUse[0]);
     if (added.length) {
       fs.writeFileSync(sPath, JSON.stringify(live, null, 2) + '\n');
       console.log(bold(`${sPath}: added ${added.length} new key(s): ${added.join(', ')}`));
@@ -212,6 +260,15 @@ if (!fs.existsSync(sPath)) {
   }
 }
 try { fs.chmodSync(sPath, 0o600); } catch { /* Windows */ }   // embeds the sentinel
+
+// Claude Code discovers portable agents and skills under its profile/config directory, not
+// beside the shim executable. Copy missing shipped assets on every setup so upgrades become
+// visible without overwriting anything the user has edited locally.
+try {
+  const { installPortableAssets } = await import('./dsv4shim-reroute.mjs');
+  const assets = installPortableAssets(PROFILE_DIR, ROOT);
+  if (assets.length) console.log(`Installed portable assets: ${assets.join(', ')}`);
+} catch (e) { console.error(yel(`portable skill install skipped: ${e.message}`)); }
 
 // autostart
 if (!WIN && spawnSync('systemctl', ['--user', '--version'], { stdio: 'ignore' }).status === 0) {

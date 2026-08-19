@@ -49,6 +49,10 @@ fs.writeFileSync(path.join(CONFIG_DIR, 'probe-results.json'), JSON.stringify({
 const seen = [];
 let classifierRetryAttempts = 0;
 let exhaustAttempts = 0;
+let trafficActive = 0;
+let maxTrafficActive = 0;
+let backgroundTrafficActive = 0;
+let maxBackgroundTrafficActive = 0;
 const mock = http.createServer((req, res) => {
   // Accumulate as Buffers and decode ONCE. `b += d` on a Buffer calls toString() per
   // chunk, which corrupts any UTF-8 character straddling a chunk boundary — the exact
@@ -60,6 +64,22 @@ const mock = http.createServer((req, res) => {
     const b = Buffer.concat(chunks).toString('utf8');
     const body = JSON.parse(b || '{}');
     seen.push({ path: req.url, body, auth: req.headers.authorization });
+
+    // A delayed marker lets the end-to-end suite verify the local pay-as-you-go traffic gate,
+    // including its stricter background lane, without relying on a real provider rate limit.
+    const marker = JSON.stringify(body.system ?? '');
+    if (/TRAFFIC_MAIN_MARKER|TRAFFIC_BACKGROUND_MARKER/.test(marker)) {
+      const background = /TRAFFIC_BACKGROUND_MARKER/.test(marker);
+      trafficActive++;
+      maxTrafficActive = Math.max(maxTrafficActive, trafficActive);
+      if (background) { backgroundTrafficActive++; maxBackgroundTrafficActive = Math.max(maxBackgroundTrafficActive, backgroundTrafficActive); }
+      return setTimeout(() => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ id: 'traffic', type: 'message', role: 'assistant', content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 20, output_tokens: 2 } }));
+        trafficActive--;
+        if (background) backgroundTrafficActive--;
+      }, 80);
+    }
 
     // Test hook: a classifier-shaped request carrying this marker fails the connection
     // (no response at all — simulating a stall/reset) on its first two attempts, then
@@ -298,7 +318,7 @@ check('subagent slot -> high', r.last?.body?.output_config?.effort === 'high',
 // Ultracode promotion of subagents must be scoped to the session that asked for it.
 await send(msg({ output_config: { effort: 'xhigh' }, metadata: { user_id: 'sess-A' } }));
 r = await send({ ...msg({ metadata: { user_id: 'sess-A' } }), model: 'deepseek-v4-flash-sub' });
-check('ultracode promotes ITS OWN session subagents -> max', r.last?.body?.output_config?.effort === 'max');
+check('ultracode keeps helper subagents on their configured effort (no pay-as-you-go promotion)', r.last?.body?.output_config?.effort === 'high');
 r = await send({ ...msg({ metadata: { user_id: 'sess-B' } }), model: 'deepseek-v4-flash-sub' });
 check('other sessions unaffected -> high', r.last?.body?.output_config?.effort === 'high',
   JSON.stringify(r.last?.body?.output_config));
@@ -1201,6 +1221,20 @@ console.log('\n\x1b[1mconcurrency: isolated simultaneous streams\x1b[0m');
   check('concurrent stream B is well-formed and complete', wellFormed(bodyB), bodyB.slice(0, 200));
   check('concurrent streams did not get concatenated onto one connection',
     bodyA !== bodyB || bodyA.split('event: message_start').length === 2);
+}
+
+console.log('\n\x1b[1mlocal traffic gate\x1b[0m');
+{
+  trafficActive = 0; maxTrafficActive = 0; backgroundTrafficActive = 0; maxBackgroundTrafficActive = 0;
+  const mainBody = { model: 'deepseek-v4-pro-medium', max_tokens: 100, system: 'TRAFFIC_MAIN_MARKER', messages: [{ role: 'user', content: 'parallel' }] };
+  const bgBody = { model: 'deepseek-v4-flash-low', max_tokens: 100000, system: 'TRAFFIC_BACKGROUND_MARKER', messages: [{ role: 'user', content: 'parallel' }] };
+  const mainResults = await Promise.all(Array.from({ length: 4 }, () => send(mainBody)));
+  check('main fan-out stays within two upstream lanes', mainResults.every(r => r.status === 200) && maxTrafficActive <= 2, String(maxTrafficActive));
+  const bgStart = seen.length;
+  const bgResults = await Promise.all(Array.from({ length: 4 }, () => send(bgBody)));
+  const bgBodies = seen.slice(bgStart).map(x => x.body);
+  check('background fan-out stays within one upstream lane', bgResults.every(r => r.status === 200) && maxBackgroundTrafficActive <= 1, String(maxBackgroundTrafficActive));
+  check('background output budget is capped', bgBodies.every(x => x.max_tokens === 4096), JSON.stringify(bgBodies.map(x => x.max_tokens)));
 }
 
 console.log(`\n\x1b[1m${pass} passed, ${fail} failed\x1b[0m\n`);

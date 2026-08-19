@@ -32,9 +32,9 @@
       "max": "max"
     },
     "ultrathinkPromotesToMax": true,
-    "ultracodePromotesSubagents": true,
+    "ultracodePromotesSubagents": false,
     "ultracodeSwarmHint": true,
-    "_ultracodeSwarmHintNote": "Appends an explicit parallel-dispatch instruction to the system prompt on main-slot turns in an ultracode session. MEASURED from the ledger: a real ultracode run made 147 subagent requests over 35 minutes but never more than 7 at once, and 115 of its dispatch windows held exactly one \u2014 a parent emitting one Task block per turn and looping, where Claude emits 20+ in a single message. The shim throttles nothing (no queue, semaphore or concurrency cap exists), so the fan-out width is the model's own choice and asking explicitly is the only lever. Set false to remove the instruction.",
+    "_ultracodeSwarmHintNote": "Appends an explicit parallel-dispatch instruction to the system prompt on main-slot turns in an ultracode session. The trafficPolicy queue below bounds fan-out and keeps helper work paced; set this false to remove only the prompt hint.",
     "heuristic": {
       "enabled": true,
       "threshold": 2,
@@ -93,6 +93,17 @@
     "settleSeconds": 60,
     "idlePollSeconds": 3600,
     "lowBalanceWarnUsd": 5
+  },
+  "trafficPolicy": {
+    "_comment": "Conservative pay-as-you-go defaults: keep two agent lanes, one background lane, and pace starts so ultracode/swarm fan-out queues instead of burning balance in a burst.",
+    "maxConcurrent": 2,
+    "maxBackgroundConcurrent": 1,
+    "minStartIntervalMs": 500,
+    "backgroundMinStartIntervalMs": 1000,
+    "maxQueue": 32,
+    "queueTimeoutMs": 300000,
+    "backgroundMaxOutputTokens": 4096,
+    "subagentMaxOutputTokens": 8192
   },
   "burnRate": {
     "windowMinutes": 15

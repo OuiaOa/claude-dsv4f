@@ -46,7 +46,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-const HOME = os.homedir();
+// HOME is injectable for isolated installs/tests. On Windows os.homedir() ignores a
+// subprocess-provided HOME, which previously made setup source imports read the real user's
+// ~/.claude instead of the selected source fixture.
+const HOME = process.env.DSV4SHIM_HOME || process.env.HOME || os.homedir();
 const DST = process.env.DSV4SHIM_PROFILE || path.join(HOME, '.dsv4shim');
 const MARKER = path.join(DST, '.imported');            // now just "last synced at", not a gate
 const STATE_FILE = path.join(DST, '.import-state.json'); // per-file mtime+size manifest

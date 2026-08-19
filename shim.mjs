@@ -426,6 +426,7 @@ function environmentSanitizer(body) {
  * background sentinel for exactly that reason.
  */
 const CURRENT_MAIN_MODELS = [
+  /^claude-sonnet-4(?:-|\b)/i,
   /^claude-opus-5\b/i,
   /^claude-sonnet-5\b/i,
   /^claude-fable-5\b/i,
@@ -1401,6 +1402,11 @@ function transformRequest(body, effort, upstreamModel = MODEL, opts = {}) {
 
   const cap = cfg.limits?.maxOutputTokens;
   if (cap && body.max_tokens > cap) body.max_tokens = cap;
+  const traffic = cfg.trafficPolicy || {};
+  const helperCap = opts.slot === 'background'
+    ? traffic.backgroundMaxOutputTokens
+    : opts.slot === 'subagent' ? traffic.subagentMaxOutputTokens : null;
+  if (helperCap && body.max_tokens > helperCap) body.max_tokens = helperCap;
 
   return body;
 }
@@ -1549,6 +1555,7 @@ function usageSummary() {
       balanceAvailable: false,
     },
     burn: burnRate(),
+    traffic: trafficSnapshot(),
     // Peak-surcharge state, so the statusline shows the multiplier actually being charged
     // rather than re-deriving it and drifting. Exposed from the same peakMultiplier() that
     // prices every request.
@@ -1599,6 +1606,100 @@ function pollBalance() {
   req.on('timeout', () => req.destroy());
   req.on('error', e => vlog('balance poll error:', e.message));
   req.end();
+}
+
+// DeepSeek has no Token Plan. Keep fan-out bounded and paced locally so ultracode/swarm cannot
+// turn a pay-as-you-go account into an accidental burst of parallel billing.
+const TRAFFIC = cfg.trafficPolicy || {};
+const TRAFFIC_MAX = Math.max(1, Number(TRAFFIC.maxConcurrent) || 2);
+const TRAFFIC_BG_MAX = Math.max(1, Math.min(TRAFFIC_MAX, Number(TRAFFIC.maxBackgroundConcurrent) || 1));
+const TRAFFIC_MIN_INTERVAL = Math.max(0, Number(TRAFFIC.minStartIntervalMs) || 500);
+const TRAFFIC_BG_INTERVAL = Math.max(TRAFFIC_MIN_INTERVAL, Number(TRAFFIC.backgroundMinStartIntervalMs) || 1000);
+const TRAFFIC_MAX_QUEUE = Math.max(1, Number(TRAFFIC.maxQueue) || 32);
+const TRAFFIC_QUEUE_TIMEOUT = Math.max(1000, Number(TRAFFIC.queueTimeoutMs) || 300000);
+const trafficQueue = [];
+let trafficActive = 0;
+let trafficBackgroundActive = 0;
+let trafficLastStart = 0;
+let trafficLastBackgroundStart = 0;
+let trafficDrainTimer = null;
+let trafficDrainDue = 0;
+
+function trafficPriority(slot) { return slot === 'background' ? 2 : slot === 'subagent' ? 1 : 0; }
+
+function scheduleTrafficDrain(delay) {
+  const due = Date.now() + Math.max(1, delay);
+  if (trafficDrainTimer && trafficDrainDue <= due) return;
+  if (trafficDrainTimer) clearTimeout(trafficDrainTimer);
+  trafficDrainDue = due;
+  trafficDrainTimer = setTimeout(() => { trafficDrainTimer = null; trafficDrainDue = 0; drainTraffic(); }, Math.max(1, due - Date.now()));
+}
+
+function drainTraffic() {
+  const now = Date.now();
+  for (let i = trafficQueue.length - 1; i >= 0; i--) {
+    const item = trafficQueue[i];
+    if (item.cancelled) { trafficQueue.splice(i, 1); item.resolve(null); }
+    else if (now - item.enqueuedAt >= TRAFFIC_QUEUE_TIMEOUT) { trafficQueue.splice(i, 1); item.resolve(null); }
+  }
+  if (!trafficQueue.length) return;
+  // Always schedule the next expiry, even while all lanes are occupied. Otherwise a hung
+  // upstream request could leave queued work waiting forever with no future drain event.
+  let nextDelay = Math.min(...trafficQueue.map(item => TRAFFIC_QUEUE_TIMEOUT - (now - item.enqueuedAt)));
+  if (trafficActive >= TRAFFIC_MAX) { scheduleTrafficDrain(nextDelay); return; }
+  trafficQueue.sort((a, b) => trafficPriority(a.slot) - trafficPriority(b.slot) || a.enqueuedAt - b.enqueuedAt);
+  let index = -1;
+  for (let i = 0; i < trafficQueue.length; i++) {
+    if (trafficQueue[i].slot === 'background' && trafficBackgroundActive >= TRAFFIC_BG_MAX) continue;
+    index = i; break;
+  }
+  if (index < 0) { scheduleTrafficDrain(nextDelay); return; }
+  const item = trafficQueue[index];
+  const wait = Math.max(
+    trafficLastStart + TRAFFIC_MIN_INTERVAL - now,
+    item.slot === 'background' ? trafficLastBackgroundStart + TRAFFIC_BG_INTERVAL - now : 0,
+  );
+  if (wait > 0) { scheduleTrafficDrain(Math.min(nextDelay, wait)); return; }
+  trafficQueue.splice(index, 1);
+  trafficActive++;
+  if (item.slot === 'background') trafficBackgroundActive++;
+  trafficLastStart = now;
+  if (item.slot === 'background') trafficLastBackgroundStart = now;
+  let released = false;
+  item.resolve(() => {
+    if (released) return;
+    released = true;
+    trafficActive = Math.max(0, trafficActive - 1);
+    if (item.slot === 'background') trafficBackgroundActive = Math.max(0, trafficBackgroundActive - 1);
+    drainTraffic();
+  });
+  drainTraffic();
+}
+
+function reserveTraffic(slot) {
+  if (trafficQueue.length >= TRAFFIC_MAX_QUEUE) return { rejected: true, cancel() {} };
+  let item;
+  const promise = new Promise(resolve => {
+    item = { slot, resolve, enqueuedAt: Date.now(), cancelled: false };
+    trafficQueue.push(item);
+    drainTraffic();
+  });
+  return {
+    promise,
+    rejected: false,
+    cancel() { if (item) item.cancelled = true; drainTraffic(); },
+  };
+}
+
+function trafficSnapshot() {
+  return {
+    active: trafficActive,
+    queued: trafficQueue.length,
+    maxConcurrent: TRAFFIC_MAX,
+    backgroundActive: trafficBackgroundActive,
+    maxBackgroundConcurrent: TRAFFIC_BG_MAX,
+    minStartIntervalMs: TRAFFIC_MIN_INTERVAL,
+  };
 }
 
 // ------------------------------------------------------------------ main proxy
@@ -1683,7 +1784,7 @@ async function handleMessages(req, res, rawBody) {
   // Only the parent (main slot) decides how wide to fan out; telling a subagent to swarm
   // would just nest fan-outs inside fan-outs.
   const swarm = resolved.slot === 'main' && isUltracode(sessionKey);
-  transformRequest(body, effort, upstream.model, { swarm });
+  transformRequest(body, effort, upstream.model, { swarm, slot: resolved.slot });
 
   const outBody = Buffer.from(JSON.stringify(body));
   const streaming = body.stream === true;
@@ -1714,15 +1815,35 @@ async function handleMessages(req, res, rawBody) {
 
   let currentUpReq = null;
   let clientAborted = false;
+  let pendingTrafficTicket = null;
   res.on('close', () => {
     if (!res.writableEnded) {
       vlog('client disconnected — aborting upstream request');
       clientAborted = true;
+      if (pendingTrafficTicket) pendingTrafficTicket.cancel();
       if (currentUpReq) currentUpReq.destroy(new Error('client disconnected'));
     }
   });
 
   function sendUpstream(attempt) {
+    const ticket = reserveTraffic(resolved.slot);
+    pendingTrafficTicket = ticket;
+    if (ticket.rejected) {
+      pendingTrafficTicket = null;
+      return apiError(res, 503, 'dsv4shim: local traffic queue is full; retry shortly', 'overloaded_error');
+    }
+    ticket.promise.then(release => {
+      pendingTrafficTicket = null;
+      if (!release) {
+        if (!clientAborted && !res.headersSent) apiError(res, 503, 'dsv4shim: local traffic queue wait expired; retry shortly', 'overloaded_error');
+        return;
+      }
+      if (clientAborted) { release(); return; }
+      sendAttempt(attempt, release);
+    });
+  }
+
+  function sendAttempt(attempt, release) {
     const timeoutMs = classifierV2 ? CLASSIFIER_ATTEMPT_TIMEOUT_MS : 15 * 60 * 1000;
     const upReq = UPSTREAM_MOD.request({
       protocol: UPSTREAM.protocol,
@@ -1756,6 +1877,7 @@ async function handleMessages(req, res, rawBody) {
           try { sanitizer.flush(); } catch {}
           res.end();
           record(sniff.usage, resolved.slot, effort, why, status, started, streaming, null, upstream.model);
+          release();
         });
         upRes.on('error', () => {
           try { sanitizer.flush(); } catch {}
@@ -1764,6 +1886,7 @@ async function handleMessages(req, res, rawBody) {
           try { emitStreamError(res, 'upstream stream error'); } catch {}
           try { res.end(); } catch {}
           record(sniff.usage, resolved.slot, effort, why, status, started, streaming, null, upstream.model);
+          release();
         });
         return;
       }
@@ -1771,6 +1894,11 @@ async function handleMessages(req, res, rawBody) {
       // Non-streaming, or an error we may need to rewrite.
       const outChunks = [];
       upRes.on('data', d => { outChunks.push(d); });
+      upRes.on('error', (e) => {
+        release();
+        if (!res.headersSent) apiError(res, 502, `dsv4shim: upstream response error: ${e.message}`, 'api_error');
+        else { try { res.end(); } catch {} }
+      });
       upRes.on('end', () => {
         // Decode once: per-chunk toString() corrupts multi-byte characters split across chunks.
         const buf = Buffer.concat(outChunks).toString('utf8');
@@ -1800,6 +1928,7 @@ async function handleMessages(req, res, rawBody) {
             record(null, resolved.slot, effort, why, status, started, streaming, { outBody, respBytes: buf.length }, upstream.model);
           }
         }
+        release();
         const b = Buffer.from(out);
         const headers = relayHeaders(upRes.headers);
         headers['content-length'] = b.length;
@@ -1811,6 +1940,7 @@ async function handleMessages(req, res, rawBody) {
 
     upReq.on('timeout', () => { upReq.destroy(new Error('upstream timeout')); });
     upReq.on('error', (e) => {
+      release();
       if (clientAborted) return; // client already gone — nothing to retry into
       if (classifierV2 && attempt < CLASSIFIER_MAX_ATTEMPTS) {
         vlog(`classifier upstream attempt ${attempt} failed (${e.message}); retrying`);
