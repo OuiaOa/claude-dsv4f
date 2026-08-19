@@ -58,6 +58,8 @@ dsv4shim status                   shim state and stored keys
 dsv4shim-usage                    spend, burn rate, balance
 dsv4shim cap 10                   daily DeepSeek cap
 dsv4shim cap vision 3             daily vision cap
+dsv4shim web <url>                clean webpage reading (Defuddle/fallback)
+dsv4shim capabilities             show optional local tools detected
 ```
 
 On first `dsv4shim run` your existing memories, session transcripts and permissions are imported
@@ -71,6 +73,23 @@ elsewhere, run `dsv4shim-import --source <path>` (or pass `--source` through `ds
 Sessions are keyed by directory, so `cd` into a project and `dsv4shim run --resume` finds its
 history — including sessions originally created by the Claude Code desktop app, which writes
 to the same `~/.claude/projects` tree.
+
+## Default skills and integrations
+
+Setup copies the bundled Agent Skills into the isolated Claude profile and adds a compact
+SessionStart router. Coding sessions automatically get the quality gate plus Superpowers-style
+plan/test/debug/verify discipline, Caveman-style context conservation, bounded orchestration
+guidance for ultracode/swarm/background work, and the relevant marketing/video/YouTube workflows
+when the request matches them. DeepSeek keeps its existing model and pay-as-you-go traffic
+limits; these skills do not create extra fan-out by themselves.
+
+Webpage requests use `dsv4shim web <url>`: Defuddle is used when its CLI is installed, with a
+clean-reader fallback on a fresh install. Agent Reach is available by default as a source-aware
+internet skill; run `agent-reach doctor` before using platform-specific channels. If
+`codebase-memory-mcp` is already installed, dsv4shim attaches it through a shim-owned
+`--mcp-config` file for structural repository queries. Composio, external video providers,
+Mission Control, and other authenticated services remain opt-in and are never logged into or
+installed silently. The humanizer is intentionally not auto-loaded.
 
 ## How it works
 

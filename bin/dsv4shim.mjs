@@ -21,6 +21,7 @@ import os from 'node:os';
 import readline from 'node:readline';
 import { spawn, spawnSync } from 'node:child_process';
 import { buildClaudeChildEnv, resolveClaude } from './dsv4shim-lib.mjs';
+import { capabilityReport, discoverCapabilities, syncAutoMcpConfig } from './dsv4shim-integrations.mjs';
 import { choosePort, configuredPort, healthAt, syncLoopbackProfile } from './dsv4shim-port-manager.mjs';
 
 const HOME = os.homedir();
@@ -150,6 +151,16 @@ async function cmdStatus() {
   }
 }
 
+function cmdCapabilities() {
+  console.log(capabilityReport({ capabilities: discoverCapabilities() }));
+}
+
+async function cmdWeb(rest) {
+  const child = spawn(process.execPath, [path.join(ROOT, 'bin', 'dsv4shim-web.mjs'), ...rest], { stdio: 'inherit' });
+  const code = await new Promise(resolve => child.on('exit', c => resolve(c ?? 1)));
+  process.exit(code);
+}
+
 // ------------------------------------------------------------------------ auto-update
 
 /**
@@ -209,6 +220,9 @@ async function cmdRun(rest) {
   catch (e) { die(e.message); }
   // Filter --source out of the args we hand to claude (it's a dsv4shim flag, not a claude one).
   const claudeArgs = stripSource(rest);
+  const autoMcp = syncAutoMcpConfig(PROFILE_DIR);
+  const mcpArgs = autoMcp.configPath && !claudeArgs.includes('--mcp-config') && !claudeArgs.some(a => String(a).startsWith('--mcp-config='))
+    ? ['--mcp-config', autoMcp.configPath] : [];
 
   // Build the child env. Start from the parent env, then explicitly UNSET the two
   // env vars Claude Code uses to detect "I am inside Claude Code" so the child
@@ -235,9 +249,9 @@ async function cmdRun(rest) {
   const settingsArg = path.join(PROFILE_DIR, 'settings.json');
   const quoteForCmd = (a) => /[\s"&|<>^]/.test(a) ? `"${a.replace(/"/g, '""')}"` : a;
   const commandLine = WIN
-    ? [claude, '--settings', settingsArg, ...claudeArgs].map(quoteForCmd).join(' ')
+    ? [claude, '--settings', settingsArg, ...mcpArgs, ...claudeArgs].map(quoteForCmd).join(' ')
     : claude;
-  const spawnArgs = WIN ? [] : ['--settings', settingsArg, ...claudeArgs];
+  const spawnArgs = WIN ? [] : ['--settings', settingsArg, ...mcpArgs, ...claudeArgs];
   const child = spawn(commandLine, spawnArgs, { stdio: 'inherit', env: childEnv, shell: WIN });
   const code = await new Promise((resolve) => child.on('exit', (c) => resolve(c ?? 0)));
   process.exit(code);
@@ -360,6 +374,15 @@ Cached image descriptions keep working past the vision cap, since replaying them
 
 Note: 0 means DISABLED (unlimited), not a $0 limit. For a hard stop use 0.01.`,
 
+    web: `${bold('dsv4shim web <url>')} [--json]
+
+Read a normal webpage as clean Markdown. Uses Defuddle when installed and an Agent Reach/Jina
+clean-reader fallback otherwise.`,
+
+    capabilities: `${bold('dsv4shim capabilities')}
+
+Show which optional local tools are available. Discovery is read-only and never authenticates.`,
+
     status: `${bold('dsv4shim status')}
 
 Shows whether the shim is running, how it is started (systemd where available, otherwise on
@@ -377,6 +400,7 @@ ${bold('USE')}
   dsv4shim run [claude args]      launch Claude Code against the profile
   dsv4shim run --effort ultracode full fan-out
   dsv4shim run --resume           resume this directory's last session
+  dsv4shim web <url>              clean webpage reading (Defuddle/fallback)
 
 ${bold('SPEND')}
   dsv4shim cap [amount]           DeepSeek daily cap        (default $5)
@@ -396,7 +420,7 @@ reads your Anthropic credentials.
 `);
 }
 
-const KNOWN_COMMANDS = ['key', 'start', 'stop', 'status', 'run', 'cap', 'import', 'setup', 'help'];
+const KNOWN_COMMANDS = ['key', 'start', 'stop', 'status', 'run', 'cap', 'import', 'setup', 'help', 'web', 'capabilities'];
 const HELP_FLAGS = ['help', '--help', '-h', '-help'];
 const [rawCmd, ...rawRest] = process.argv.slice(2);
 // Bare `dsv4shim` (no subcommand), or any first token that isn't one of dsv4shim's OWN literal
@@ -412,6 +436,8 @@ switch (cmd) {
   case 'start':  await cmdStart(); break;
   case 'stop':   cmdStop(); break;
   case 'status': await cmdStatus(); break;
+  case 'capabilities': cmdCapabilities(); break;
+  case 'web':    await cmdWeb(rest); break;
   case 'run':    await cmdRun(rest); break;
   case 'cap':    capCmd(rest); break;
   case 'import': {

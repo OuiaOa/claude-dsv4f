@@ -10,6 +10,12 @@ CONFIG_DIR="${DSV4SHIM_CONFIG_DIR:-$HOME/.config/dsv4shim}"
 DATA_DIR="${DSV4SHIM_DATA_DIR:-$HOME/.local/share/dsv4shim}"
 PROFILE_DIR="$HOME/.dsv4shim"
 
+# The Node entry point owns the cross-platform helper commands. Keep the historical bash
+# launcher for normal sessions, but make the new web/capability surfaces available on POSIX too.
+if [[ "${1:-}" == "web" || "${1:-}" == "capabilities" ]]; then
+  exec node "$DATA_DIR/bin/dsv4shim.mjs" "$@"
+fi
+
 if [[ ! -s "$CONFIG_DIR/key" ]]; then
   echo "dsv4shim: no API key stored yet." >&2
   echo "Run this first, in your own terminal:  dsv4shim-setup" >&2
@@ -80,4 +86,10 @@ if [[ -d "$HOME/.claude/projects" ]] && command -v dsv4shim-import >/dev/null; t
 fi
 
 export CLAUDE_CONFIG_DIR="$PROFILE_DIR"
-exec claude --settings "$PROFILE_DIR/settings.json" "$@"
+# Refresh the optional MCP attachment without changing the user's normal Claude config.
+if [[ -f "$DATA_DIR/bin/dsv4shim-integrations.mjs" ]]; then
+  DSV4SHIM_PROFILE_DIR="$PROFILE_DIR" node "$DATA_DIR/bin/dsv4shim-integrations.mjs" >/dev/null 2>&1 || true
+fi
+MCP_ARGS=()
+if [[ -f "$PROFILE_DIR/mcp.auto.json" ]]; then MCP_ARGS+=(--mcp-config "$PROFILE_DIR/mcp.auto.json"); fi
+exec claude --settings "$PROFILE_DIR/settings.json" "${MCP_ARGS[@]}" "$@"
