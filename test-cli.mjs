@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import os from 'node:os';
-import { resolveClaude } from './bin/dsv4shim-lib.mjs';
+import { buildClaudeChildEnv, resolveClaude } from './bin/dsv4shim-lib.mjs';
 
 let pass = 0, fail = 0;
 function check(name, fn) {
@@ -132,6 +132,38 @@ check('Windows + DSV4SHIM_DATA_DIR set but no bundled copy: falls through to PAT
     home,
   });
   assert.equal(r, 'claude');
+});
+
+console.log('\n\x1b[1minteractive Claude environment\x1b[0m');
+
+check('interactive launch restores colour and spinner support under Codex host metadata', () => {
+  const env = buildClaudeChildEnv({
+    baseEnv: {
+      CODEX_CI: '1',
+      NO_COLOR: '1',
+      TERM: 'dumb',
+      CI: '1',
+      CLAUDECODE: '1',
+      CLAUDE_CODE_CHILD_SESSION: '1',
+    },
+    profileDir: 'C:\\profile',
+    interactive: true,
+  });
+  assert.equal(env.NO_COLOR, undefined);
+  assert.equal(env.CI, undefined);
+  assert.equal(env.CODEX_CI, undefined);
+  assert.equal(env.TERM, 'xterm-256color');
+  assert.equal(env.COLORTERM, 'truecolor');
+  assert.equal(env.FORCE_COLOR, '1');
+  assert.equal(env.CLAUDE_CONFIG_DIR, 'C:\\profile');
+  assert.equal(env.CLAUDE_CODE_FORCE_SESSION_PERSISTENCE, '1');
+});
+
+check('non-interactive launch preserves the caller colour policy', () => {
+  const env = buildClaudeChildEnv({ baseEnv: { NO_COLOR: '1', TERM: 'dumb', CODEX_CI: '1' }, interactive: false });
+  assert.equal(env.NO_COLOR, '1');
+  assert.equal(env.TERM, 'dumb');
+  assert.equal(env.CODEX_CI, '1');
 });
 
 // -------------------------------------------------------------------------------------

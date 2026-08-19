@@ -20,7 +20,7 @@ import path from 'node:path';
 import os from 'node:os';
 import readline from 'node:readline';
 import { spawn, spawnSync } from 'node:child_process';
-import { resolveClaude } from './dsv4shim-lib.mjs';
+import { buildClaudeChildEnv, resolveClaude } from './dsv4shim-lib.mjs';
 import { choosePort, configuredPort, healthAt, syncLoopbackProfile } from './dsv4shim-port-manager.mjs';
 
 const HOME = os.homedir();
@@ -220,14 +220,7 @@ async function cmdRun(rest) {
   // parent-process checks (verified against code.claude.com/docs/en/env-vars.md
   // and issue #83830). Stripping both + using acceptEdits mode (see setup) gets
   // us as close to "foreground interactive" as the docs allow for a shim launch.
-  const childEnv = { ...process.env };
-  delete childEnv.CLAUDECODE;
-  delete childEnv.CLAUDE_CODE_CHILD_SESSION;
-  childEnv.CLAUDE_CONFIG_DIR = PROFILE_DIR;
-  childEnv.CLAUDE_CODE_FORCE_SESSION_PERSISTENCE = '1';
-  // Silence the direct api.anthropic.com telemetry/version-check probe that
-  // bypasses ANTHROPIC_BASE_URL and would fail with the sentinel auth token.
-  childEnv.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';
+  const childEnv = buildClaudeChildEnv({ profileDir: PROFILE_DIR });
 
   // CONFIRMED LIVE BUG, fixed 2026-08-13: resolveClaude() deliberately returns the bare
   // string 'claude' on Windows (see dsv4shim-lib.mjs) so cmd.exe's PATHEXT resolves it to

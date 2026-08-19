@@ -136,6 +136,37 @@ export function resolveClaude({ platform = process.platform,
 }
 
 /**
+ * Build the environment for a real interactive Claude Code session.
+ *
+ * Codex's host terminal exports NO_COLOR=1, TERM=dumb and CODEX_CI=1 even when the
+ * user is visibly running an interactive terminal. Passing those through makes Claude
+ * disable ANSI colour, animated spinners and other TTY affordances. Repair that host
+ * metadata only for an interactive shim launch; piped/non-interactive runs keep the
+ * caller's output policy intact.
+ */
+export function buildClaudeChildEnv({ baseEnv = process.env, profileDir, interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY) } = {}) {
+  const childEnv = { ...baseEnv };
+  delete childEnv.CLAUDECODE;
+  delete childEnv.CLAUDE_CODE_CHILD_SESSION;
+  if (profileDir) childEnv.CLAUDE_CONFIG_DIR = profileDir;
+  childEnv.CLAUDE_CODE_FORCE_SESSION_PERSISTENCE = '1';
+  childEnv.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';
+
+  const hostForcesPlainUi = String(baseEnv.CODEX_CI || '') === '1'
+    || String(baseEnv.TERM || '').toLowerCase() === 'dumb';
+  if (interactive && hostForcesPlainUi) {
+    delete childEnv.NO_COLOR;
+    delete childEnv.CI;
+    delete childEnv.CONTINUOUS_INTEGRATION;
+    delete childEnv.CODEX_CI;
+    childEnv.TERM = 'xterm-256color';
+    childEnv.COLORTERM = 'truecolor';
+    childEnv.FORCE_COLOR = '1';
+  }
+  return childEnv;
+}
+
+/**
  * Three-way merge of a shipped default into a live config, using the PREVIOUSLY shipped default
  * as the base. Mutates `live`.
  *
