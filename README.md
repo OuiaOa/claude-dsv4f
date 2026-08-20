@@ -102,6 +102,10 @@ Claude Code is pointed at a local shim on `127.0.0.1:8788` rather than at Anthro
 - **chooses effort per task.** Background calls (titles, summaries) run with thinking off;
   routine turns at `high`; detected-hard turns at `ultra`; `ultrathink` or ultracode at `max`.
   A level you set explicitly is never overridden.
+- **keeps the model picker clean.** Claude Code's built-in Default row is the only default;
+  the visible custom rows are Pro high (Opus), Pro max (Fable), Flash max (Sonnet) and Flash
+  high (Haiku). Background and subagent profiles are internal and no extra custom-model row is
+  registered.
 - **routes images.** Image blocks are swapped for text descriptions from a vision model.
   Descriptions are cached by image hash and replayed byte-identically, which both avoids
   re-describing and keeps the prompt prefix stable for DeepSeek's 50x cache-hit discount.

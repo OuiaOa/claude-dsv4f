@@ -34,6 +34,7 @@ const DATA = process.env.DSV4SHIM_DATA_DIR || join(homedir(), '.local', 'share',
 const CONFIG = process.env.DSV4SHIM_CONFIG_DIR || join(homedir(), '.config', 'dsv4shim');
 import { threeWayMerge } from './dsv4shim-lib.mjs';
 import { configuredPort } from './dsv4shim-port-manager.mjs';
+import { installPortableAssets } from './dsv4shim-reroute.mjs';
 
 const CACHE = join(DATA, '.update-cache');
 const args = process.argv.slice(2);
@@ -71,6 +72,7 @@ const installed = existsSync(markerPath) ? readFileSync(markerPath, 'utf8').trim
 
 if (installed === remote && !FORCE) {
   log(`already current (${remote.slice(0, 7)})`);
+  syncClaudeProfile();
   writeResult({ outcome: 'current', from: installed, to: remote });
   process.exit(0);
 }
@@ -123,6 +125,7 @@ function rollback(why) {
 
 // New config keys only — your keys, caps and model choices are never rewritten.
 mergeConfig();
+syncClaudeProfile();
 
 // ------------------------------------------------------------------ verify
 let failed = null;
@@ -200,6 +203,65 @@ function mergeConfig() {
     if (removed.length) log(`config.json: removed ${removed.length} superseded key(s): ${removed.join(', ')}`);
   }
   if (kept.length) log(`config.json: kept ${kept.length} local customisation(s): ${kept.join(', ')}`);
+}
+
+/**
+ * Keep an already-installed Claude profile aligned with the shim's model picker policy.
+ * Updating the runtime files alone is not enough: Claude reads these env values from the
+ * profile's settings.json, so an old profile can keep showing the removed custom/default rows
+ * forever. Only values recognisably written by dsv4shim are migrated; user-selected model names
+ * remain untouched.
+ */
+function syncClaudeProfile() {
+  const profile = process.env.DSV4SHIM_PROFILE_DIR || join(homedir(), '.dsv4shim');
+  const settingsPath = join(profile, 'settings.json');
+  const desired = {
+    ANTHROPIC_DEFAULT_OPUS_MODEL: 'deepseek-v4-pro-high',
+    ANTHROPIC_DEFAULT_FABLE_MODEL: 'deepseek-v4-pro-max',
+    ANTHROPIC_DEFAULT_SONNET_MODEL: 'deepseek-v4-flash-max',
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: 'deepseek-v4-flash-high',
+    ANTHROPIC_SMALL_FAST_MODEL: 'deepseek-v4-flash-low',
+    CLAUDE_CODE_SUBAGENT_MODEL: 'deepseek-v4-flash-sub',
+    CLAUDE_CODE_BG_CLASSIFIER_MODEL: 'deepseek-v4-flash-low',
+  };
+  const ownProfile = value => typeof value === 'string' && /^deepseek-v4-/i.test(value);
+  let changed = false;
+
+  if (existsSync(settingsPath)) {
+    try {
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf8').replace(/^﻿/, ''));
+      settings.env ??= {};
+      if (ownProfile(settings.env.ANTHROPIC_MODEL)) {
+        delete settings.env.ANTHROPIC_MODEL;
+        changed = true;
+      }
+      if (ownProfile(settings.env.ANTHROPIC_CUSTOM_MODEL_OPTION) ||
+          /^DeepSeek V4 Flash 0731$/i.test(String(settings.env.ANTHROPIC_CUSTOM_MODEL_OPTION_NAME || ''))) {
+        for (const key of ['ANTHROPIC_CUSTOM_MODEL_OPTION', 'ANTHROPIC_CUSTOM_MODEL_OPTION_NAME', 'ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION']) {
+          if (key in settings.env) { delete settings.env[key]; changed = true; }
+        }
+      }
+      for (const [key, value] of Object.entries(desired)) {
+        if (!(key in settings.env) || (ownProfile(settings.env[key]) && settings.env[key] !== value)) {
+          settings.env[key] = value;
+          changed = true;
+        }
+      }
+      if (changed) {
+        writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+        log(`Claude profile model picker migrated: ${settingsPath}`);
+      }
+    } catch (e) {
+      warn(`Claude profile migration skipped: ${e.message}`);
+    }
+  }
+
+  try {
+    const assets = installPortableAssets(profile, DATA);
+    if (assets.length) log(`portable assets synced: ${assets.join(', ')}`);
+  } catch (e) {
+    warn(`portable asset sync skipped: ${e.message}`);
+  }
 }
 
 /**
