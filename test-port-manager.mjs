@@ -6,7 +6,7 @@ import net from 'node:net';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dsv4shim-port-'));
 process.env.CODEX_SHIM_PORT_REGISTRY = path.join(root, 'registry.json');
-const { choosePort, configuredPort } = await import('./bin/dsv4shim-port-manager.mjs');
+const { choosePort, configuredPort, syncLoopbackProfile } = await import('./bin/dsv4shim-port-manager.mjs');
 
 const sibling = path.join(root, 'sibling');
 const configDir = path.join(root, 'dsv4shim-config');
@@ -18,6 +18,16 @@ const first = await choosePort({ app: 'dsv4shim-test', configDir, dataDir, confi
 assert.equal(first.preferredPort, 45010);
 assert.equal(first.port, 45011, 'an installed sibling config reserves the preferred port');
 assert.equal(configuredPort({ envVar: 'DSV4SHIM_TEST_PORT', app: 'dsv4shim-test', dataDir, configPort: 45010 }), 45011);
+
+const settingsPath = path.join(root, 'profile', 'settings.json');
+fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+fs.writeFileSync(settingsPath, JSON.stringify({ env: {
+  ANTHROPIC_BASE_URL: 'http://127.0.0.1:45010',
+  ANTHROPIC_AUTH_TOKEN: 'sentinel',
+} }));
+assert.equal(syncLoopbackProfile(settingsPath, first.port), true);
+assert.equal(JSON.parse(fs.readFileSync(settingsPath, 'utf8')).env.ANTHROPIC_BASE_URL, 'http://127.0.0.1:45011');
+assert.equal(JSON.parse(fs.readFileSync(settingsPath, 'utf8')).env.ANTHROPIC_AUTH_TOKEN, 'sentinel');
 
 const listener = net.createServer();
 await new Promise((resolve, reject) => { listener.once('error', reject); listener.listen(45011, '127.0.0.1', resolve); });

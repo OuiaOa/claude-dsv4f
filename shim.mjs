@@ -23,11 +23,12 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
-import { choosePort } from './bin/dsv4shim-port-manager.mjs';
+import { choosePort, syncLoopbackProfile } from './bin/dsv4shim-port-manager.mjs';
 
 const HOME = os.homedir();
 const CONFIG_DIR = process.env.DSV4SHIM_CONFIG_DIR || path.join(HOME, '.config', 'dsv4shim');
 const DATA_DIR = process.env.DSV4SHIM_DATA_DIR || path.join(HOME, '.local', 'share', 'dsv4shim');
+const PROFILE_DIR = process.env.DSV4SHIM_PROFILE_DIR || path.join(HOME, '.dsv4shim');
 
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 const KEY_FILE = path.join(CONFIG_DIR, 'key');
@@ -2160,6 +2161,13 @@ const portSelection = await choosePort({
 });
 const PORT = portSelection.port;
 const BIND = cfg.bind || '127.0.0.1';
+// The service can be started directly by systemd, without the dsv4shim wrapper. Keep the
+// isolated Claude profile aligned with the port the service actually selected, including when
+// the preferred port was occupied by a sibling process. Without this, Claude keeps calling the
+// old port and reports a misleading API connection failure.
+if (syncLoopbackProfile(path.join(PROFILE_DIR, 'settings.json'), PORT)) {
+  log(`isolated Claude profile synchronized to port ${PORT}`);
+}
 
 // Without this, an EADDRINUSE (leftover process still holding the port, or something else
 // bound to it) is an uncaught 'error' event — Node crashes with a raw stack trace instead of
