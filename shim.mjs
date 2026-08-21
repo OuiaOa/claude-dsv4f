@@ -2168,6 +2168,16 @@ const BIND = cfg.bind || '127.0.0.1';
 if (syncLoopbackProfile(path.join(PROFILE_DIR, 'settings.json'), PORT)) {
   log(`isolated Claude profile synchronized to port ${PORT}`);
 }
+// Some installs deliberately keep Claude's normal ~/.claude sessions while rerouting that
+// profile through dsv4shim. If that explicit reroute is present, keep it aligned too when the
+// daemon moves to a sibling-safe fallback port. The sentinel check is important: a normal
+// Anthropic profile, or an unrelated local proxy, must never be rewritten by the shim.
+const standardProfileSettings = path.join(HOME, '.claude', 'settings.json');
+const standardProfile = readJson(standardProfileSettings, null);
+if (standardProfile?.env?.ANTHROPIC_AUTH_TOKEN === SENTINEL &&
+    syncLoopbackProfile(standardProfileSettings, PORT)) {
+  log(`rerouted standard Claude profile synchronized to port ${PORT}`);
+}
 
 // Without this, an EADDRINUSE (leftover process still holding the port, or something else
 // bound to it) is an uncaught 'error' event — Node crashes with a raw stack trace instead of
