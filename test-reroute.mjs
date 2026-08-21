@@ -269,7 +269,9 @@ console.log('\n\x1b[1mapplyCliReroute: deny-list hook is deduped, never duplicat
     env: {
       ANTHROPIC_MODEL: 'deepseek-v4-flash',              // stale sentinel -> must refresh
       ANTHROPIC_DEFAULT_SONNET_MODEL: 'deepseek-v4-opus',   // stale from a PREVIOUS scheme
+      ANTHROPIC_CUSTOM_MODEL_OPTION: 'deepseek-v4-flash',
       ANTHROPIC_CUSTOM_MODEL_OPTION_NAME: 'DeepSeek V4 Flash 0731',
+      ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION: 'legacy custom entry',
       ANTHROPIC_BASE_URL: 'http://127.0.0.1:9999',       // machine-specific -> never touched
       ANTHROPIC_AUTH_TOKEN: 'user-token',
     },
@@ -288,7 +290,8 @@ console.log('\n\x1b[1mapplyCliReroute: deny-list hook is deduped, never duplicat
   // tier. A stale one left behind by an older reroute is not this function's to delete, but it
   // must not be re-added either.
   check('old default and custom-model entries are removed',
-    !('ANTHROPIC_MODEL' in after) && !('ANTHROPIC_CUSTOM_MODEL_OPTION' in after) && !('ANTHROPIC_CUSTOM_MODEL_OPTION_NAME' in after),
+    !('ANTHROPIC_MODEL' in after) && !('ANTHROPIC_CUSTOM_MODEL_OPTION' in after) &&
+      !('ANTHROPIC_CUSTOM_MODEL_OPTION_NAME' in after) && !('ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION' in after),
     JSON.stringify(after));
   check('an existing base URL is never rewritten',
     after.ANTHROPIC_BASE_URL === 'http://127.0.0.1:9999', after.ANTHROPIC_BASE_URL);

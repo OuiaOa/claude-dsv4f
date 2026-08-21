@@ -246,11 +246,11 @@ function syncClaudeProfile() {
         delete settings.env.ANTHROPIC_MODEL;
         changed = true;
       }
-      if (ownProfile(settings.env.ANTHROPIC_CUSTOM_MODEL_OPTION) ||
-          /^DeepSeek V4 Flash 0731$/i.test(String(settings.env.ANTHROPIC_CUSTOM_MODEL_OPTION_NAME || ''))) {
-        for (const key of ['ANTHROPIC_CUSTOM_MODEL_OPTION', 'ANTHROPIC_CUSTOM_MODEL_OPTION_NAME', 'ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION']) {
-          if (key in settings.env) { delete settings.env[key]; changed = true; }
-        }
+      // A shim profile is intentionally limited to Claude's built-in Default row plus the four
+      // tier rows. Remove every custom-option variant, not just the names used by older releases;
+      // Claude renders any remaining ANTHROPIC_CUSTOM_MODEL_OPTION as a sixth picker entry.
+      for (const key of ['ANTHROPIC_CUSTOM_MODEL_OPTION', 'ANTHROPIC_CUSTOM_MODEL_OPTION_NAME', 'ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION']) {
+        if (key in settings.env) { delete settings.env[key]; changed = true; }
       }
       for (const [key, value] of Object.entries(desired)) {
         if (!(key in settings.env) || (ownProfile(settings.env[key]) && settings.env[key] !== value)) {
